@@ -98,11 +98,17 @@ python -m streamlit run app.py
 2. Go to Streamlit Cloud.
 3. Click Create app / New app.
 4. Connect your GitHub repository.
-5. Add app secret:
+5. In app settings, open Secrets and add:
 
    GEMINI_API_KEY = "your_api_key_here"
 
 6. Deploy.
+
+## Startup Safety (Cloud + Local)
+
+- If GEMINI_API_KEY is missing, the app shows a warning instead of crashing.
+- If Gemini API temporarily fails, the app falls back to best available local results so UI remains usable.
+- Product recommendations remain catalog-safe (no hallucinated products).
 
 ## Optional CI
 
