@@ -19,6 +19,7 @@ A complete, deployment-ready shopping assistant built with Python, Streamlit, an
 ## Project Files
 
 - app.py: Main Streamlit application
+- streamlit_app.py: Streamlit Cloud entrypoint
 - products.py: Product dataset (12 products)
 - requirements.txt: Runtime dependencies
 - check_setup.py: Optional local setup verifier
@@ -46,7 +47,7 @@ A complete, deployment-ready shopping assistant built with Python, Streamlit, an
 
 6. Run with the safer command (avoids PATH issues):
 
-   python -m streamlit run app.py
+   python -m streamlit run streamlit_app.py
 
 ## Verify Streamlit Installation
 
@@ -56,7 +57,7 @@ python -m streamlit --version
 
 Then start app:
 
-python -m streamlit run app.py
+python -m streamlit run streamlit_app.py
 
 Expected terminal output includes:
 
@@ -71,7 +72,7 @@ Use one of these commands:
 
 Then run:
 
-python -m streamlit run app.py
+python -m streamlit run streamlit_app.py
 
 ## Troubleshooting
 
@@ -98,11 +99,15 @@ python -m streamlit run app.py
 2. Go to Streamlit Cloud.
 3. Click Create app / New app.
 4. Connect your GitHub repository.
-5. In app settings, open Secrets and add:
+5. Set Main file path to:
+
+   streamlit_app.py
+
+6. In app settings, open Secrets and add:
 
    GEMINI_API_KEY = "your_api_key_here"
 
-6. Deploy.
+7. Deploy.
 
 ## Startup Safety (Cloud + Local)
 
