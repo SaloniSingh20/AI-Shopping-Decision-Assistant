@@ -8,65 +8,69 @@ from uuid import uuid4
 import google.generativeai as genai
 import streamlit as st
 
-from products import products
+from products import load_products
+
+
+products = load_products()
 
 
 PRODUCT_SYSTEM_PROMPT = """
-You are an expert AI shopping decision assistant, not just a recommender.
+You are an AI-powered product recommendation assistant.
 
-Your job is to help users MAKE the best decision, not just list options.
+You must dynamically generate responses based on:
+
+1. User query
+2. Provided product dataset (JSON or database)
 
 STRICT RULES:
-- Only use products from the provided dataset. Never hallucinate.
-- If no exact match exists, suggest the closest alternatives and explain why.
-- Always prioritize relevance, clarity, and usefulness.
 
-THINKING PROCESS (internal, do not show steps):
-1. Understand user intent (goal, budget, use-case)
-2. Identify constraints (price, category, preferences)
-3. Match products based on tags, category, and price
-4. Rank options based on best fit
-5. Evaluate trade-offs
+* Do NOT give static, hardcoded, or template responses.
+* Do NOT assume any fixed category (like stationery).
+* Always infer category from the product data or user query.
+* If product data changes, responses must change accordingly.
 
-OUTPUT REQUIREMENTS:
-For every recommendation:
-- Clearly explain WHY it matches the user’s need
-- State BEST use-case
-- Mention TRADE-OFFS (important)
-- Give a FINAL actionable suggestion (what user should do)
+CAPABILITIES:
 
-STYLE:
-- Be concise but insightful
-- Avoid generic phrases
-- Be confident and helpful
+1. PRODUCT RECOMMENDATION:
 
-DECISION GUIDANCE:
-Always guide the user like:
-“If your priority is X → choose A”
-“If your priority is Y → choose B”
+* Understand user intent (budget, purpose, preferences)
+* Filter relevant products from dataset
+* Rank them intelligently
+* Explain WHY each product is recommended
 
-FALLBACK:
-If the query is unclear:
-- Ask ONE smart clarifying question
+2. PRODUCT COMPARISON:
 
-GOAL:
-Act like a smart shopping advisor that helps users confidently decide.
-"""
+* If user provides 2 products:
+    → Compare features, pricing, pros/cons
+    → Give a clear recommendation based on use-case
 
-GENERAL_SYSTEM_PROMPT = """
-You are a helpful, practical AI assistant.
+3. CONTEXT-AWARE CHAT:
 
-You can answer general questions like ChatGPT and provide useful guidance.
-If relevant, include concise actionable next steps.
-Do not invent products from the user's catalog unless they are explicitly provided.
-When the user asks outside the catalog domain, answer normally with general knowledge.
-Keep responses clear, concise, and helpful.
+* Use previous conversation context to refine suggestions
+
+4. ANTI-HALLUCINATION:
+
+* ONLY recommend products present in dataset
+* If no exact match:
+    → Say: "No exact match found, here are the closest options..."
+
+RESPONSE STYLE:
+
+* Clean, structured, human-like
+* Use bullet points
+* Avoid repetition
+* Always include reasoning
 """
 
 CHAT_STORE_FILE = "chats_store.json"
-KNOWN_CATEGORIES = sorted({p["category"].lower() for p in products})
-KNOWN_TAGS = sorted({tag.lower() for p in products for tag in p["tags"]})
-PRODUCT_BY_NAME = {p["name"]: p for p in products}
+KNOWN_CATEGORIES = sorted({str(p.get("category", "")).strip().lower() for p in products if str(p.get("category", "")).strip()})
+KNOWN_TAGS = sorted({str(tag).strip().lower() for p in products for tag in p.get("tags", []) if str(tag).strip()})
+PRODUCT_BY_NAME = {str(p.get("name", "")).strip(): p for p in products if str(p.get("name", "")).strip()}
+STOPWORDS = {
+    "i", "me", "my", "we", "our", "you", "your", "a", "an", "the", "for", "to", "of", "and", "or", "in",
+    "on", "with", "from", "want", "need", "looking", "find", "show", "best", "good", "better", "please",
+    "under", "below", "within", "less", "than", "over", "above", "between", "budget", "compare", "vs", "versus",
+}
 
 
 st.set_page_config(page_title="AI Shopping Decision Assistant", page_icon="🛍️", layout="centered")
@@ -555,6 +559,9 @@ def ensure_state() -> None:
             "budget": None,
         }
 
+    if "user_preferences" not in st.session_state:
+        st.session_state.user_preferences = {"budget": None, "category": None}
+
 
 def sync_flow_state(chat: Dict[str, Any]) -> None:
     state = chat.get("conversation_state", {})
@@ -616,69 +623,32 @@ def detect_intent(query: str) -> str:
     q = query.lower().strip()
     if any(k in q for k in ["compare", "vs", "versus", "difference between"]):
         return "comparison"
-    if any(k in q for k in ["suggest", "recommend", "find", "under", "budget", "best", "cheaper", "premium"]):
+    if any(k in q for k in ["suggest", "recommend", "find", "under", "budget", "best", "cheaper", "premium", "need", "want"]):
         return "recommendation"
     if re.search(r"(?:under|below|within|less than)\s*(?:₹|rs\.?|inr)?\s*(\d+)", q):
         return "recommendation"
-    return "chat"
+    return "product_chat"
 
 
 def classify_query(query: str, model: Any = None, chat: Optional[Dict[str, Any]] = None) -> str:
     q = query.lower().strip()
-
-    if chat:
-        state = chat.get("conversation_state", {})
-        if state.get("stage") != "initial":
-            print(f"[DEBUG][Router] Skipping classification because flow is in progress: stage={state.get('stage')}")
-            return "product_query"
-
     if any(k in q for k in ["compare", "vs", "versus", "difference between"]):
         return "comparison"
 
     category_hits = sum(1 for c in KNOWN_CATEGORIES if c in q)
     tag_hits = sum(1 for t in KNOWN_TAGS if t in q)
-    product_hits = sum(1 for p in products if p["name"].lower() in q)
+    product_hits = sum(1 for p in products if str(p.get("name", "")).lower() in q)
 
-    shopping_terms = [
-        "buy", "recommend", "suggest", "under", "budget", "best", "product", "catalog",
-        "stationery", "planner", "journal", "notebook", "pen", "gift",
-    ]
-    general_terms = [
-        "what is", "how to", "why", "explain", "tips", "brands", "career", "code", "health",
-        "travel", "news", "recipe", "math", "history",
-    ]
-
+    shopping_terms = ["buy", "recommend", "suggest", "under", "budget", "best", "product", "catalog", "compare"]
     has_shopping_signal = any(k in q for k in shopping_terms)
-    has_general_signal = any(k in q for k in general_terms)
 
     if product_hits > 0 or category_hits > 0 or tag_hits > 0:
         return "product_query"
 
-    if has_shopping_signal and not has_general_signal:
+    if has_shopping_signal:
         return "product_query"
 
-    if has_general_signal and not has_shopping_signal:
-        return "general_query"
-
-    if model is not None:
-        classifier_prompt = f"""
-Classify the following user query into exactly one label:
-- product_query
-- general_query
-- comparison
-- unknown
-
-Return only the label.
-
-Query: {query}
-""".strip()
-        result = safe_generate_response(model, classifier_prompt, generation_config={"temperature": 0})
-        if result.get("ok") and result.get("text"):
-            label = result.get("text", "").strip().lower()
-            if label in ["product_query", "general_query", "comparison", "unknown"]:
-                return label
-
-    return "unknown"
+    return "product_query"
 
 
 def reset_product_conversation_state(chat: Dict[str, Any]) -> None:
@@ -711,21 +681,12 @@ def extract_budget(text: str) -> Optional[int]:
 
 def extract_use_case(text: str) -> Optional[str]:
     q = text.lower().strip()
-    mapping = {
-        "journaling": "journal",
-        "journal": "journal",
-        "planning": "planner",
-        "planner": "planner",
-        "gifting": "gifting",
-        "gift": "gifting",
-        "study": "study",
-        "office": "office",
-        "creative": "creative",
-        "work": "office",
-    }
-    for key, normalized in mapping.items():
-        if key in q:
-            return normalized
+    for pattern in [r"for\s+([a-zA-Z\s]{3,40})", r"used\s+for\s+([a-zA-Z\s]{3,40})"]:
+        m = re.search(pattern, q)
+        if m:
+            return m.group(1).strip()
+    if any(k in q for k in ["work", "office", "gaming", "travel", "study", "daily"]):
+        return q
     return None
 
 
@@ -734,28 +695,25 @@ def extract_category(text: str) -> Optional[str]:
     for category in KNOWN_CATEGORIES:
         if category in q:
             return category
-    if any(k in q for k in ["notebook", "journal", "planner", "stationery"]):
-        return "stationery"
     return None
 
 
 def extract_product_type(text: str) -> Optional[str]:
     q = text.lower().strip()
-    product_terms = [
-        "pen", "notebook", "journal", "planner", "bookmark", "sticky notes", "washi", "organizer",
-        "pouch", "calendar", "cards", "stationery", "desk",
-    ]
-    for term in product_terms:
-        if term in q:
-            return term
+    for category in KNOWN_CATEGORIES:
+        if category in q:
+            return category
+    for token in re.findall(r"[a-z0-9]+", q):
+        if token in KNOWN_TAGS:
+            return token
     return None
 
 
 def looks_like_product_need(text: str) -> bool:
     q = text.lower()
-    product_words = ["notebook", "journal", "planner", "gift", "stationery", "pen", "desk"]
-    intent_words = ["want", "need", "looking for", "help me choose", "buy"]
-    return any(w in q for w in product_words) and any(iw in q for iw in intent_words)
+    intent_words = ["want", "need", "looking for", "help me choose", "buy", "recommend", "suggest"]
+    has_catalog_signal = any(w in q for w in KNOWN_CATEGORIES) or any(w in q for w in KNOWN_TAGS)
+    return has_catalog_signal or any(iw in q for iw in intent_words)
 
 
 def is_ready_for_recommendation(collected_data: Dict[str, Any]) -> bool:
@@ -803,80 +761,45 @@ def update_conversation_state(chat: Dict[str, Any], user_query: str) -> Dict[str
     if parsed_product_type is not None:
         collected["product_type"] = parsed_product_type
 
-    if state["stage"] == "initial" and not collected.get("base_query"):
+    if not collected.get("base_query"):
         collected["base_query"] = user_query
-
-    # Follow-up path: continue collecting data instead of starting a new intent branch.
-    if state["current_intent"] == "recommendation" and state["stage"] in ["collecting_budget", "collecting_use_case"]:
-        print(f"[DEBUG][Flow] intent={state['current_intent']} stage={state['stage']} collected={collected}")
-        if state["stage"] == "collecting_budget" and collected.get("budget") is None:
-            return {"status": "ask", "text": "What is your budget in rupees? (example: under 500)"}
-
-        if state["stage"] == "collecting_budget" and collected.get("budget") is not None:
-            # If we already have a specific product/category target, recommendation can proceed.
-            if collected.get("product_type") or collected.get("category"):
-                state["stage"] = "ready_for_recommendation"
-                effective_query = build_refined_query(collected, user_query)
-                print(f"[DEBUG][Flow] intent={state['current_intent']} stage={state['stage']} collected={collected}")
-                return {"status": "ready", "intent": "recommendation", "effective_query": effective_query}
-            state["stage"] = "collecting_use_case"
-
-        if state["stage"] == "collecting_use_case" and collected.get("use_case") is None:
-            return {"status": "ask", "text": "Got it. What is your use-case: journal, planner, or gifting?"}
-
-        if is_ready_for_recommendation(collected):
-            state["stage"] = "ready_for_recommendation"
-            effective_query = build_refined_query(collected, user_query)
-            print(f"[DEBUG][Flow] intent={state['current_intent']} stage={state['stage']} collected={collected}")
-            return {"status": "ready", "intent": "recommendation", "effective_query": effective_query}
-
-        print(f"[DEBUG][Flow] intent={state['current_intent']} stage={state['stage']} collected={collected}")
-        return {"status": "ask", "text": "I didn't understand, can you clarify your budget or use-case?"}
 
     if detected_intent == "comparison":
         state["current_intent"] = "comparison"
-        state["stage"] = "initial"
-        print(f"[DEBUG][Flow] intent={state['current_intent']} stage={state['stage']} collected={collected}")
+        state["stage"] = "ready"
         return {"status": "ready", "intent": "comparison", "effective_query": user_query}
 
-    if detected_intent == "recommendation" or looks_like_product_need(user_query):
-        state["current_intent"] = "recommendation"
-        if not collected.get("base_query"):
-            collected["base_query"] = user_query
-
-        if collected.get("budget") is None:
-            state["stage"] = "collecting_budget"
-            print(f"[DEBUG][Flow] intent={state['current_intent']} stage={state['stage']} collected={collected}")
-            return {"status": "ask", "text": "Great, I can help with that. What is your budget?"}
-
-        if collected.get("use_case") is None:
-            if collected.get("product_type") or collected.get("category"):
-                state["stage"] = "ready_for_recommendation"
-                effective_query = build_refined_query(collected, user_query)
-                print(f"[DEBUG][Flow] intent={state['current_intent']} stage={state['stage']} collected={collected}")
-                return {"status": "ready", "intent": "recommendation", "effective_query": effective_query}
-            state["stage"] = "collecting_use_case"
-            print(f"[DEBUG][Flow] intent={state['current_intent']} stage={state['stage']} collected={collected}")
-            return {"status": "ask", "text": "Nice. Is this for journaling, planning, or gifting?"}
-
-        state["stage"] = "ready_for_recommendation"
-        effective_query = build_refined_query(collected, user_query)
-        print(f"[DEBUG][Flow] intent={state['current_intent']} stage={state['stage']} collected={collected}")
-        return {"status": "ready", "intent": "recommendation", "effective_query": effective_query}
-
-    state["current_intent"] = "chat"
-    state["stage"] = "initial"
-    print(f"[DEBUG][Flow] intent={state['current_intent']} stage={state['stage']} collected={collected}")
-    return {"status": "ready", "intent": "chat", "effective_query": user_query}
+    state["current_intent"] = "recommendation"
+    state["stage"] = "ready"
+    effective_query = build_refined_query(collected, user_query)
+    return {"status": "ready", "intent": "recommendation", "effective_query": effective_query}
 
 
 def extract_constraints(query: str) -> Dict[str, Any]:
     q = query.lower()
-    constraints: Dict[str, Any] = {"max_price": None, "category": None, "tags": [], "premium": False}
+    constraints: Dict[str, Any] = {
+        "max_price": None,
+        "min_price": None,
+        "category": None,
+        "tags": [],
+        "features": [],
+        "premium": False,
+    }
 
     price_match = re.search(r"(?:under|below|within|less than)\s*(?:₹|rs\.?|inr)?\s*(\d+)", q)
     if price_match:
         constraints["max_price"] = int(price_match.group(1))
+
+    min_price_match = re.search(r"(?:over|above|at least|more than)\s*(?:₹|rs\.?|inr)?\s*(\d+)", q)
+    if min_price_match:
+        constraints["min_price"] = int(min_price_match.group(1))
+
+    between_match = re.search(r"(?:between|from)\s*(?:₹|rs\.?|inr)?\s*(\d+)\s*(?:and|to)\s*(?:₹|rs\.?|inr)?\s*(\d+)", q)
+    if between_match:
+        first = int(between_match.group(1))
+        second = int(between_match.group(2))
+        constraints["min_price"] = min(first, second)
+        constraints["max_price"] = max(first, second)
 
     for category in KNOWN_CATEGORIES:
         if category in q:
@@ -884,31 +807,131 @@ def extract_constraints(query: str) -> Dict[str, Any]:
             break
 
     tags = [tag for tag in KNOWN_TAGS if tag in q]
-    if "aesthetic" in q and "aesthetic" not in tags:
-        tags.append("aesthetic")
-    if "minimal" in q and "minimal" not in tags:
-        tags.append("minimal")
-
     constraints["premium"] = any(x in q for x in ["premium", "higher-end", "luxury"]) 
     constraints["tags"] = sorted(set(tags))
+
+    tokens = re.findall(r"[a-z0-9]+", q)
+    features = [t for t in tokens if len(t) > 2 and t not in STOPWORDS and t not in constraints["tags"] and t != constraints["category"]]
+    constraints["features"] = sorted(set(features))[:12]
     return constraints
 
 
+def keyword_tokens(query: str) -> List[str]:
+    tokens = re.findall(r"[a-z0-9]+", query.lower())
+    return [t for t in tokens if len(t) > 2 and t not in STOPWORDS]
+
+
+def score_products(catalog: List[Dict[str, Any]], constraints: Dict[str, Any], query: str) -> List[Dict[str, Any]]:
+    tokens = keyword_tokens(query)
+    scored: List[Dict[str, Any]] = []
+
+    target_price = None
+    if constraints.get("min_price") is not None and constraints.get("max_price") is not None:
+        target_price = (float(constraints["min_price"]) + float(constraints["max_price"])) / 2.0
+    elif constraints.get("max_price") is not None:
+        target_price = float(constraints["max_price"])
+    elif constraints.get("min_price") is not None:
+        target_price = float(constraints["min_price"])
+
+    for item in catalog:
+        price = float(item.get("price", 0) or 0)
+
+        # Price score (0-40)
+        price_score = 20.0
+        if target_price is not None:
+            if constraints.get("max_price") is not None and price <= float(constraints["max_price"]):
+                price_score = 40.0
+            elif constraints.get("min_price") is not None and price >= float(constraints["min_price"]):
+                price_score = 35.0
+            else:
+                delta = abs(price - target_price)
+                price_score = max(0.0, 40.0 - (delta / max(1.0, target_price)) * 40.0)
+
+        # Feature score (0-35)
+        item_features = " ".join(str(x).lower() for x in item.get("features", []))
+        feature_terms = constraints.get("features", []) + constraints.get("tags", [])
+        if feature_terms:
+            feature_hits = sum(1 for f in feature_terms if f in item_features)
+            feature_score = min(35.0, (feature_hits / max(1, len(set(feature_terms)))) * 35.0)
+        else:
+            feature_score = 17.5
+
+        # Keyword score (0-25)
+        blob = f"{item.get('name', '')} {item.get('category', '')} {item.get('description', '')} {' '.join(str(x) for x in item.get('features', []))} {' '.join(str(x) for x in item.get('tags', []))}".lower()
+        if tokens:
+            keyword_hits = sum(1 for t in tokens if t in blob)
+            keyword_score = min(25.0, (keyword_hits / max(1, len(set(tokens)))) * 25.0)
+        else:
+            keyword_score = 12.5
+
+        total = round(price_score + feature_score + keyword_score, 2)
+        ranked = dict(item)
+        ranked["score"] = {
+            "total": total,
+            "price_match": round(price_score, 2),
+            "feature_match": round(feature_score, 2),
+            "keyword_match": round(keyword_score, 2),
+        }
+        scored.append(ranked)
+
+    scored.sort(key=lambda x: float(x.get("score", {}).get("total", 0)), reverse=True)
+    return scored
+
+
+def merge_with_session_preferences(constraints: Dict[str, Any]) -> Dict[str, Any]:
+    prefs = st.session_state.get("user_preferences", {})
+    merged = dict(constraints)
+    if merged.get("max_price") is None and prefs.get("budget") is not None:
+        merged["max_price"] = prefs.get("budget")
+    if not merged.get("category") and prefs.get("category"):
+        merged["category"] = prefs.get("category")
+    return merged
+
+
+def update_session_preferences(constraints: Dict[str, Any]) -> None:
+    prefs = st.session_state.get("user_preferences", {"budget": None, "category": None})
+    if constraints.get("max_price") is not None:
+        prefs["budget"] = constraints["max_price"]
+    if constraints.get("category"):
+        prefs["category"] = constraints["category"]
+    st.session_state.user_preferences = prefs
+
+
 def filter_products(catalog: List[Dict[str, Any]], constraints: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def blob(item: Dict[str, Any]) -> str:
+        features = item.get("features", [])
+        if isinstance(features, list):
+            feature_text = " ".join(str(x) for x in features)
+        else:
+            feature_text = str(features)
+        tags = " ".join(str(t) for t in item.get("tags", []))
+        return f"{item.get('name', '')} {item.get('category', '')} {item.get('description', '')} {feature_text} {tags}".lower()
+
     pool = []
     for item in catalog:
-        if constraints.get("max_price") is not None and item["price"] > constraints["max_price"]:
+        price = float(item.get("price", 0) or 0)
+        if constraints.get("max_price") is not None and price > constraints["max_price"]:
             continue
-        if constraints.get("category") and item["category"].lower() != constraints["category"]:
+        if constraints.get("min_price") is not None and price < constraints["min_price"]:
             continue
+        category = str(item.get("category", "")).lower()
+        if constraints.get("category") and category != constraints["category"]:
+            continue
+
         required_tags = constraints.get("tags", [])
-        item_tags = [t.lower() for t in item["tags"]]
+        item_tags = [str(t).lower() for t in item.get("tags", [])]
         if required_tags and not all(tag in item_tags for tag in required_tags):
             continue
+
+        required_features = constraints.get("features", [])
+        search_blob = blob(item)
+        if required_features and not any(f in search_blob for f in required_features):
+            continue
+
         pool.append(item)
 
     if constraints.get("premium") and pool:
-        return sorted(pool, key=lambda x: x["price"], reverse=True)
+        return sorted(pool, key=lambda x: float(x.get("price", 0) or 0), reverse=True)
 
     return pool
 
@@ -918,12 +941,15 @@ def closest_products(catalog: List[Dict[str, Any]], constraints: Dict[str, Any],
     target_price = constraints.get("max_price")
     for item in catalog:
         score = 0.0
-        if constraints.get("category") and item["category"].lower() == constraints["category"]:
+        if constraints.get("category") and str(item.get("category", "")).lower() == constraints["category"]:
             score += 2.0
-        tags = [t.lower() for t in item["tags"]]
+        tags = [str(t).lower() for t in item.get("tags", [])]
         score += sum(1.0 for t in constraints.get("tags", []) if t in tags)
         if target_price is not None:
-            score += max(0.0, 2.0 - abs(item["price"] - target_price) / 300.0)
+            score += max(0.0, 2.0 - abs(float(item.get("price", 0) or 0) - target_price) / 300.0)
+
+        blob = f"{item.get('name', '')} {item.get('description', '')} {' '.join(str(x) for x in item.get('features', []))} {' '.join(str(x) for x in item.get('tags', []))}".lower()
+        score += sum(0.4 for f in constraints.get("features", []) if f in blob)
         ranked.append((score, item))
     ranked.sort(key=lambda x: x[0], reverse=True)
     return [item for _, item in ranked[:limit]]
@@ -968,6 +994,9 @@ def get_actionable_recommendation(model: Any, user_query: str, history: List[Dic
 Return JSON only. No markdown. No extra text.
 Use ONLY products provided in the list.
 Keep chain-of-thought hidden.
+Always rank products in best-first order.
+Use each product's score fields to justify ranking order.
+For the top recommendation, explicitly explain why other options were not selected as best.
 
 Conversation history:
 {hist}
@@ -990,9 +1019,11 @@ Required schema:
       "best_use_case": "",
       "tradeoffs": "",
       "next_action": "",
-      "score_explanation": ""
+            "score_explanation": "",
+            "why_not_best": ""
     }}
-  ]
+    ],
+    "best_overall": ""
 }}
 """.strip()
 
@@ -1029,17 +1060,75 @@ Required schema:
             {
                 "name": base["name"],
                 "price": base["price"],
-                "reason": rec.get("reason", "Strong alignment with your request."),
+                "reason": rec.get("reason") or rec.get("score_explanation") or "Strong query alignment based on the provided data.",
                 "match_score": rec.get("match_score", "80"),
-                "why_good_for_you": rec.get("why_good_for_you", "Matches your core preferences and budget intent."),
-                "best_use_case": rec.get("best_use_case", "General daily use."),
-                "tradeoffs": rec.get("tradeoffs", "May not fit every edge case."),
-                "next_action": rec.get("next_action", "Shortlist this option and compare it with one alternative."),
-                "score_explanation": rec.get("score_explanation", "Score based on budget fit, tags, and use-case relevance."),
+                "why_good_for_you": rec.get("why_good_for_you") or rec.get("reason") or "Good fit for the requested constraints.",
+                "best_use_case": rec.get("best_use_case") or "Use-case inferred from your query.",
+                "tradeoffs": rec.get("tradeoffs") or "Trade-offs depend on your budget and feature priorities.",
+                "next_action": rec.get("next_action") or "Compare this with one nearby option to confirm fit.",
+                "score_explanation": rec.get("score_explanation") or "Score reflects category, budget, and feature relevance.",
+                "why_not_best": rec.get("why_not_best") or "",
+                "score_details": base.get("score", {}),
             }
         )
 
+    if cleaned:
+        top = cleaned[0]
+        if not top.get("why_not_best"):
+            alternatives = [r for r in cleaned[1:3] if r.get("name")]
+            if alternatives:
+                alt_text = "; ".join([f"{r['name']} scored lower on price/feature/keyword alignment" for r in alternatives])
+                top["why_not_best"] = alt_text
+            else:
+                top["why_not_best"] = "No close alternatives had better overall score alignment."
+
+    for idx, rec in enumerate(cleaned):
+        if idx > 0 and not rec.get("why_not_best"):
+            rec["why_not_best"] = "This is a strong option but has a lower combined score than the top pick."
+
     return cleaned
+
+
+def rule_based_recommendations(user_query: str, constraints: Dict[str, Any], ranked_pool: List[Dict[str, Any]], limit: int = 3) -> List[Dict[str, Any]]:
+    recs: List[Dict[str, Any]] = []
+    top_name = ranked_pool[0].get("name", "") if ranked_pool else ""
+    for item in ranked_pool[:limit]:
+        price = item.get("price", "N/A")
+        category = str(item.get("category", "")).strip() or "Unspecified"
+        tags = [str(t) for t in item.get("tags", [])]
+
+        reasons: List[str] = []
+        if constraints.get("category") and category.lower() == constraints["category"]:
+            reasons.append(f"matches the {category} category")
+        if constraints.get("max_price") is not None:
+            reasons.append(f"fits within budget under {constraints['max_price']}")
+        matched_tags = [t for t in tags if t.lower() in constraints.get("tags", [])]
+        if matched_tags:
+            reasons.append("matches requested features: " + ", ".join(matched_tags))
+
+        if not reasons:
+            reasons.append("is one of the closest data-backed matches for your request")
+
+        recs.append(
+            {
+                "name": item.get("name", "Unknown Product"),
+                "price": price,
+                "reason": "; ".join(reasons),
+                "match_score": str(int(round(float(item.get("score", {}).get("total", 75))))),
+                "why_good_for_you": "; ".join(reasons),
+                "best_use_case": constraints.get("use_case") or "General use",
+                "tradeoffs": f"May require balancing price and feature priorities in {category}.",
+                "next_action": "Compare with one adjacent option before final selection.",
+                "score_explanation": "Computed from category, budget, tag, and query-term relevance.",
+                "why_not_best": (
+                    "Other options were not chosen as best because they had lower combined price, feature, and keyword scores."
+                    if item.get("name") == top_name
+                    else f"Not selected as best because {top_name} achieved a stronger total score."
+                ),
+                "score_details": item.get("score", {}),
+            }
+        )
+    return recs
 
 
 def generate_followup_actions(recommendations: List[Dict[str, Any]]) -> List[str]:
@@ -1098,6 +1187,7 @@ Required schema:
   "pros_product2": [],
   "cons_product1": [],
   "cons_product2": [],
+    "key_differences": [],
   "final_verdict": "",
   "best_use_case": "",
   "explain_differences": ""
@@ -1108,7 +1198,7 @@ Required schema:
     if not candidates:
         return {}
 
-    required = ["pros_product1", "pros_product2", "cons_product1", "cons_product2", "final_verdict", "best_use_case"]
+    required = ["pros_product1", "pros_product2", "cons_product1", "cons_product2", "key_differences", "final_verdict", "best_use_case"]
     return sorted(candidates, key=lambda c: sum(1 for k in required if k in c), reverse=True)[0]
 
 
@@ -1116,11 +1206,11 @@ def chat_with_context(model: Any, query: str, history: List[Dict[str, str]]) -> 
     hist = json.dumps(history[-12:], indent=2)
     catalog = json.dumps(products, indent=2)
     prompt = f"""
-{GENERAL_SYSTEM_PROMPT}
+{PRODUCT_SYSTEM_PROMPT}
 
-Answer as a practical decision assistant, not just a recommender.
-Only reference products from provided catalog.
-If no exact answer exists, ask one clarifying question.
+Respond as a context-aware product assistant.
+If the query is broad, ask one clarifying question while still suggesting closest options.
+Only use products from the provided dataset.
 
 Conversation history:
 {hist}
@@ -1214,10 +1304,20 @@ def render_recommendation_message(chat_id: str, msg_index: int, msg: Dict[str, A
                 <p><strong>⚖️ Trade-offs:</strong> {rec.get('tradeoffs', 'May not be ideal for all preferences')}</p>
                 <p><strong>🛒 What you should do next:</strong> {rec.get('next_action', 'Shortlist and compare with one alternative')}</p>
                 <p class=\"small\"><strong>Score reasoning:</strong> {rec.get('score_explanation', 'Based on budget fit, category fit, and tag alignment.')}</p>
+                <p class=\"small\"><strong>{'Why others were not chosen as best' if best else 'Why this was not ranked #1'}:</strong> {rec.get('why_not_best', 'Ranking is based on overall score and fit.')}</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
+
+        details = rec.get("score_details", {})
+        if isinstance(details, dict) and details:
+            st.caption(
+                "Score breakdown | "
+                + f"Price: {details.get('price_match', 'N/A')} "
+                + f"Feature: {details.get('feature_match', 'N/A')} "
+                + f"Keyword: {details.get('keyword_match', 'N/A')}"
+            )
 
         score = int(max(0, min(100, score_float(rec.get("match_score", "0")))))
         st.progress(score / 100.0, text=f"Match Score: {score}%")
@@ -1254,6 +1354,10 @@ def render_recommendation_message(chat_id: str, msg_index: int, msg: Dict[str, A
 
 def render_sidebar() -> None:
     st.sidebar.title("Chats")
+
+    if KNOWN_CATEGORIES:
+        display_categories = ", ".join([c.title() for c in KNOWN_CATEGORIES])
+        st.sidebar.caption(f"Categories: {display_categories}")
 
     if st.sidebar.button("+ New chat", use_container_width=True):
         chat = create_chat()
@@ -1302,14 +1406,14 @@ def render_sidebar() -> None:
 
 
 def handle_product_query(chat: Dict[str, Any], model: Any, user_query: str, forced_intent: Optional[str] = None) -> None:
+    if not products:
+        add_message(chat, "assistant", "text", text="No products are available in the dataset right now.", mode="product")
+        return
+
     flow_result = update_conversation_state(chat, user_query)
     touch_chat(chat)
     persist_state()
     sync_flow_state(chat)
-
-    if flow_result.get("status") == "ask":
-        add_message(chat, "assistant", "text", text=flow_result.get("text", "I didn't understand, can you clarify?"), mode="product")
-        return
 
     intent = forced_intent or flow_result.get("intent", "recommendation")
     effective_query = flow_result.get("effective_query", user_query)
@@ -1324,33 +1428,6 @@ def handle_product_query(chat: Dict[str, Any], model: Any, user_query: str, forc
 
     history = [{"role": m["role"], "content": m.get("text", m.get("type", ""))} for m in chat["messages"]]
 
-    if model is None:
-        constraints = extract_constraints(effective_query)
-        fallback = closest_products(products, constraints, limit=3)
-        recs = [
-            {
-                "name": p["name"],
-                "price": p["price"],
-                "reason": "Closest available match from the catalog.",
-                "match_score": "70",
-                "why_good_for_you": "Closest available fit while AI service is unavailable.",
-                "best_use_case": "Quick shortlist until AI service is back.",
-                "tradeoffs": "Personalization is limited without AI ranking.",
-                "next_action": "Refine budget/use-case and retry when AI is available.",
-                "score_explanation": "Based on rule-based category, tag, and price proximity.",
-            }
-            for p in fallback
-        ]
-        add_message(
-            chat,
-            "assistant",
-            "recommendation",
-            text="AI service temporarily unavailable. Showing best available results.",
-            data={"recommendations": recs, "followups": generate_followup_actions(recs)},
-            mode="product",
-        )
-        return
-
     if intent == "comparison":
         targets = extract_comparison_targets(effective_query, products)
         if len(targets) < 2 and len(st.session_state.last_recommendation_names) >= 2:
@@ -1364,21 +1441,30 @@ def handle_product_query(chat: Dict[str, Any], model: Any, user_query: str, forc
                 chat,
                 "assistant",
                 "text",
-                text="Please mention two product names to compare, for example: Compare Soft Linen Journal and Sakura Weekly Planner.",
+                text="Please mention two product names to compare.",
                 mode="product",
             )
             return
 
-        cmp_data = compare_products_with_ai(model, effective_query, history, targets[0], targets[1])
+        cmp_data: Dict[str, Any] = {}
+        if model is not None:
+            cmp_data = compare_products_with_ai(model, effective_query, history, targets[0], targets[1])
         if not cmp_data:
+            a_price = float(targets[0].get("price", 0) or 0)
+            b_price = float(targets[1].get("price", 0) or 0)
+            cheaper = targets[0]["name"] if a_price <= b_price else targets[1]["name"]
             cmp_data = {
-                "pros_product1": ["Good fit for core usage."],
-                "pros_product2": ["Strong alternative profile."],
-                "cons_product1": ["May not fit all preferences."],
-                "cons_product2": ["May be less budget-friendly."],
-                "final_verdict": "Pick based on your top priority: budget, look, or features.",
-                "best_use_case": "Best choice depends on whether you value practicality or aesthetics first.",
-                "explain_differences": "One option is better for style, the other for utility.",
+                "pros_product1": [f"Category: {targets[0].get('category', 'N/A')}", f"Price: {targets[0].get('price', 'N/A')}"],
+                "pros_product2": [f"Category: {targets[1].get('category', 'N/A')}", f"Price: {targets[1].get('price', 'N/A')}"],
+                "cons_product1": ["Some requested features may not be explicitly listed in data."],
+                "cons_product2": ["Some requested features may not be explicitly listed in data."],
+                "key_differences": [
+                    f"Price difference: {abs(a_price - b_price):.0f}",
+                    f"Categories: {targets[0].get('category', 'N/A')} vs {targets[1].get('category', 'N/A')}",
+                ],
+                "final_verdict": f"Best budget-first choice: {cheaper}.",
+                "best_use_case": "Choose based on the feature set most aligned with your need.",
+                "explain_differences": "Comparison generated directly from available product fields.",
             }
         add_message(
             chat,
@@ -1391,41 +1477,38 @@ def handle_product_query(chat: Dict[str, Any], model: Any, user_query: str, forc
         return
 
     constraints = extract_constraints(effective_query)
+    update_session_preferences(constraints)
+    constraints = merge_with_session_preferences(constraints)
+
     filtered = filter_products(products, constraints)
+    scored_filtered = score_products(filtered, constraints, effective_query) if filtered else []
 
     no_exact = False
-    pool = filtered
-    clarifying_question = ""
+    pool = scored_filtered
     if not filtered:
         no_exact = True
-        pool = closest_products(products, constraints, limit=4)
-        clarifying_question = "I could not find an exact match. Do you want to relax budget, category, or style preferences?"
+        closest = closest_products(products, constraints, limit=8)
+        pool = score_products(closest, constraints, effective_query)
 
-    recs = get_actionable_recommendation(model, effective_query, history, pool)
+    # LLM receives score-sorted products with deterministic scoring metadata.
+    pool = sorted(pool, key=lambda x: float(x.get("score", {}).get("total", 0)), reverse=True)
+
+    recs: List[Dict[str, Any]] = []
+    if model is not None and pool:
+        recs = get_actionable_recommendation(model, effective_query, history, pool)
+
     if not recs:
-        fallback = closest_products(products, constraints, limit=3)
-        recs = [
-            {
-                "name": p["name"],
-                "price": p["price"],
-                "reason": "Closest available match from the catalog.",
-                "match_score": "72",
-                "why_good_for_you": "Closest fit based on your current constraints.",
-                "best_use_case": "Use when you want a nearby option without changing many preferences.",
-                "tradeoffs": "May miss one or more specific constraints.",
-                "next_action": "Consider adjusting budget or one tag to improve precision.",
-                "score_explanation": "Calculated from category, tag overlap, and price proximity.",
-            }
-            for p in fallback
-        ]
-        st.session_state.last_api_error = st.session_state.get("last_api_error") or "AI response unavailable"
+        ranked_pool = pool if pool else score_products(closest_products(products, constraints, limit=8), constraints, effective_query)
+        recs = rule_based_recommendations(effective_query, constraints, ranked_pool, limit=3)
 
     followups = generate_followup_actions(recs)
-    note = "Here are actionable picks for your decision."
+    note = "Top Picks:"
     if no_exact:
-        note = "No exact match found. I am showing closest alternatives. " + clarifying_question
-    if st.session_state.get("last_api_error"):
-        note = "AI service temporarily unavailable. Showing best available results."
+        note = "No exact match found, here are the closest options..."
+    elif recs:
+        top = recs[0]
+        top_reason = str(top.get("reason", "Best fit based on current filters."))
+        note = f"Top Picks:\n\nBest Overall: {top.get('name', 'N/A')} ({top_reason})"
 
     add_message(
         chat,
@@ -1443,45 +1526,10 @@ def handle_product_query(chat: Dict[str, Any], model: Any, user_query: str, forc
 
 
 def handle_general_query(chat: Dict[str, Any], model: Any, user_query: str) -> None:
-    reset_product_conversation_state(chat)
-    sync_flow_state(chat)
-    history = [{"role": m["role"], "content": m.get("text", m.get("type", ""))} for m in chat["messages"]]
-
-    apparel_terms = ["pants", "trouser", "jeans", "shirt", "tshirt", "clothes", "hoodie", "jacket", "shoes"]
-    asked_outside_catalog = any(t in user_query.lower() for t in apparel_terms)
-
-    if model is None:
-        answer = (
-            "AI service temporarily unavailable. Here is a quick general approach: define your budget, "
-            "compare 2-3 options by quality/reviews/return policy, and choose based on your top priority."
-        )
-    else:
-        answer = chat_with_context(model, user_query, history)
-    if not answer or not answer.strip():
-        answer = "I didn't understand, can you clarify?"
-
-    if asked_outside_catalog:
-        catalog_categories = ", ".join(KNOWN_CATEGORIES)
-        answer = (
-            "I do not have clothing products in your catalog right now. "
-            + answer
-            + f" If you want catalog-backed recommendations, I can help with these categories: {catalog_categories}."
-        )
-
-    add_message(chat, "assistant", "text", text=answer, mode="general")
+    handle_product_query(chat, model, user_query)
 
 
 def route_query(chat: Dict[str, Any], model: Any, user_query: str) -> None:
-    state = chat.get("conversation_state", {})
-    stage = state.get("stage", "initial")
-    current_intent = state.get("current_intent", "chat")
-
-    # Lock product mode while collecting multi-step inputs.
-    if current_intent == "recommendation" and stage in ["collecting_budget", "collecting_use_case"]:
-        print(f"[DEBUG][Router] mode lock active stage={stage}; skipping classifier for query={user_query}")
-        handle_product_query(chat, model, user_query)
-        return
-
     classification = classify_query(user_query, model=model, chat=chat)
     print(f"[DEBUG][Router] classification={classification} query={user_query}")
 
@@ -1489,22 +1537,7 @@ def route_query(chat: Dict[str, Any], model: Any, user_query: str) -> None:
         handle_product_query(chat, model, user_query, forced_intent="comparison")
         return
 
-    if classification == "product_query":
-        handle_product_query(chat, model, user_query)
-        return
-
-    if classification == "general_query":
-        handle_general_query(chat, model, user_query)
-        return
-
-    # Unknown: ask one clarifying question while still being useful.
-    add_message(
-        chat,
-        "assistant",
-        "text",
-        text="I can help in two modes: product catalog assistant or general AI advice. Do you want product recommendations from your catalog, or general guidance?",
-        mode="general",
-    )
+    handle_product_query(chat, model, user_query)
 
 
 def process_user_query(chat: Dict[str, Any], model: Any, user_query: str) -> None:
@@ -1524,8 +1557,8 @@ with st.spinner("Starting assistant..."):
 st.markdown(
     """
     <div class="hero">
-        <h1>AI Shopping Decision Assistant</h1>
-        <p>Get actionable recommendations, trade-offs, and next steps to decide faster.</p>
+        <h1>AI Product Recommender</h1>
+        <p>Describe what you want, compare products, and get data-backed picks across any category.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1534,12 +1567,16 @@ st.markdown(
 st.markdown(
     """
     <div class="subtle-note section-gap">
-        Try: <strong>"I want a notebook"</strong>, <strong>"Suggest aesthetic stationery under ₹500"</strong>, or
-        <strong>"Compare Soft Linen Journal and Sakura Weekly Planner"</strong>
+        Try: <strong>"I need wireless earbuds under ₹3000 for workouts"</strong>,
+        <strong>"Suggest skincare products for dry skin"</strong>, or
+        <strong>"Compare Product A and Product B"</strong>
     </div>
     """,
     unsafe_allow_html=True,
 )
+
+if KNOWN_CATEGORIES:
+    st.caption("Available categories: " + " | ".join([c.title() for c in KNOWN_CATEGORIES]))
 
 if model is None:
     st.warning(
@@ -1588,8 +1625,12 @@ for i, msg in enumerate(active_chat["messages"]):
             )
             st.write("Final Verdict:", data.get("final_verdict", ""))
             st.write("Best Use Case:", data.get("best_use_case", ""))
+            if data.get("key_differences"):
+                st.write("Key Differences:")
+                for point in data.get("key_differences", []):
+                    st.write(f"- {point}")
             if data.get("explain_differences"):
-                st.write("Explain Differences:", data.get("explain_differences"))
+                st.write("Comparison Summary:", data.get("explain_differences"))
         else:
             st.write(msg.get("text", ""))
 

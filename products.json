@@ -1,0 +1,122 @@
+[
+  {
+    "id": "el-001",
+    "name": "Nova X5 Smartphone",
+    "category": "Electronics",
+    "price": 28999,
+    "rating": 4.5,
+    "features": ["6.7-inch OLED", "120Hz display", "50MP camera", "5000mAh battery", "5G"],
+    "tags": ["phone", "camera", "battery", "gaming", "5g"],
+    "description": "Balanced flagship phone with smooth display, strong battery life, and reliable camera performance."
+  },
+  {
+    "id": "el-002",
+    "name": "PulseBeat ANC Headphones",
+    "category": "Electronics",
+    "price": 7999,
+    "rating": 4.4,
+    "features": ["Active noise cancellation", "40-hour battery", "Bluetooth 5.3", "Fast charging"],
+    "tags": ["headphones", "anc", "wireless", "music", "travel"],
+    "description": "Wireless over-ear headphones with deep bass and dependable ANC for commuting and work."
+  },
+  {
+    "id": "el-003",
+    "name": "AeroBook 14 Laptop",
+    "category": "Electronics",
+    "price": 64999,
+    "rating": 4.6,
+    "features": ["14-inch FHD", "Intel Core i5", "16GB RAM", "512GB SSD", "Backlit keyboard"],
+    "tags": ["laptop", "productivity", "student", "office", "portable"],
+    "description": "Lightweight laptop for students and professionals with strong multitasking performance."
+  },
+  {
+    "id": "el-004",
+    "name": "ZenCam Pro Phone",
+    "category": "Electronics",
+    "price": 36999,
+    "rating": 4.7,
+    "features": ["108MP camera", "Optical image stabilization", "AMOLED display", "67W charging"],
+    "tags": ["phone", "camera", "creator", "premium", "fast-charge"],
+    "description": "Camera-focused smartphone aimed at creators who want detailed photos and quick charging."
+  },
+  {
+    "id": "fa-001",
+    "name": "Urban Ribbed Crop Top",
+    "category": "Fashion",
+    "price": 999,
+    "rating": 4.2,
+    "features": ["Cotton blend", "Stretch fit", "Breathable fabric", "Machine washable"],
+    "tags": ["top", "casual", "summer", "everyday", "women"],
+    "description": "Comfortable everyday top with a modern fit suitable for casual and weekend looks."
+  },
+  {
+    "id": "fa-002",
+    "name": "DenimFlex Slim Jeans",
+    "category": "Fashion",
+    "price": 1899,
+    "rating": 4.3,
+    "features": ["Mid-rise", "Stretch denim", "Fade-resistant", "Slim silhouette"],
+    "tags": ["jeans", "denim", "daily-wear", "stretch", "unisex"],
+    "description": "Versatile slim-fit jeans with stretch comfort for long day wear."
+  },
+  {
+    "id": "fa-003",
+    "name": "StrideMax Running Shoes",
+    "category": "Fashion",
+    "price": 3299,
+    "rating": 4.4,
+    "features": ["Cushioned midsole", "Breathable mesh", "Rubber outsole", "Lightweight build"],
+    "tags": ["shoes", "running", "sports", "comfort", "training"],
+    "description": "Performance running shoes with responsive cushioning for workouts and daily runs."
+  },
+  {
+    "id": "fa-004",
+    "name": "Classic Linen Overshirt",
+    "category": "Fashion",
+    "price": 2199,
+    "rating": 4.1,
+    "features": ["Linen-cotton weave", "Relaxed fit", "Button front", "Layer-friendly"],
+    "tags": ["top", "linen", "smart-casual", "men", "layering"],
+    "description": "Breathable overshirt for warm weather styling and smart-casual outfits."
+  },
+  {
+    "id": "be-001",
+    "name": "Velvet Matte Lipstick",
+    "category": "Beauty",
+    "price": 699,
+    "rating": 4.3,
+    "features": ["Transfer-resistant", "8-hour wear", "Vitamin E", "Rich pigment"],
+    "tags": ["lipstick", "makeup", "matte", "longwear", "hydrating"],
+    "description": "Comfortable matte lipstick with rich color payoff and minimal dryness."
+  },
+  {
+    "id": "be-002",
+    "name": "HydraGlow Skincare Kit",
+    "category": "Beauty",
+    "price": 2499,
+    "rating": 4.6,
+    "features": ["Cleanser", "Hyaluronic serum", "Moisturizer", "Barrier repair"],
+    "tags": ["skincare", "dry-skin", "hydration", "routine", "sensitive"],
+    "description": "Complete hydration-focused skincare routine designed for dry and sensitive skin."
+  },
+  {
+    "id": "be-003",
+    "name": "Noir Bloom Eau De Parfum",
+    "category": "Beauty",
+    "price": 3499,
+    "rating": 4.5,
+    "features": ["Floral-woody scent", "Long-lasting", "Elegant bottle", "Evening wear"],
+    "tags": ["perfume", "fragrance", "floral", "premium", "gift"],
+    "description": "Sophisticated floral-woody perfume with lasting projection for evening occasions."
+  },
+  {
+    "id": "be-004",
+    "name": "SunShield SPF 50 Gel",
+    "category": "Beauty",
+    "price": 899,
+    "rating": 4.4,
+    "features": ["SPF 50 PA++++", "Non-greasy", "No white cast", "Sweat resistant"],
+    "tags": ["skincare", "sunscreen", "daily-use", "outdoor", "oil-control"],
+    "description": "Lightweight sunscreen gel that protects daily without heaviness or residue."
+  }
+]
