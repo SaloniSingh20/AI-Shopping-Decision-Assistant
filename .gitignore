@@ -1,5 +1,0 @@
-.venv/
-__pycache__/
-*.py[cod]
-chats_store.json
-.streamlit/secrets.toml

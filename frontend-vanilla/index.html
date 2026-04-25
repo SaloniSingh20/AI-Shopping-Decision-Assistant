@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shop AI - Your Smart Shopping Assistant</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-icon">🛍️</span>
+      Shop AI
+    </div>
+    
+    <button class="new-chat-btn" id="newChatBtn">
+      + New Chat
+    </button>
+    
+    <div class="sidebar-section-label">Recent</div>
+    <div class="history-list" id="historyList">
+      <div class="empty-history">No chat history yet</div>
+    </div>
+    
+    <div class="sidebar-footer">
+      <button class="settings-toggle" id="settingsToggle">
+        ⚙️ Settings
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+    <!-- Settings Panel -->
+    <div class="settings-panel hidden" id="settingsPanel">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button class="close-settings" id="closeSettings">×</button>
+      </div>
+      
+      <div class="setting-row">
+        <span>Budget (₹ max)</span>
+        <input type="number" id="budgetInput" placeholder="e.g. 2000">
+      </div>
+      
+      <div class="setting-row">
+        <span>Gender</span>
+        <select id="genderSelect">
+          <option value="">Prefer not to say</option>
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+        </select>
+      </div>
+      
+      <button class="save-settings-btn" id="saveSettings">Save Preferences</button>
+    </div>
+
+    <!-- Messages Container -->
+    <div class="messages-container" id="messagesContainer">
+      <!-- Welcome Screen -->
+      <div class="welcome-screen" id="welcomeScreen">
+        <div class="welcome-icon">🛍️</div>
+        <h1>Welcome to Shop AI</h1>
+        <p>Chat with our AI assistant to discover amazing products tailored to your needs.</p>
+        
+        <div class="suggestion-chips">
+          <div class="chip" data-query="wireless earbuds under 1500">Wireless earbuds</div>
+          <div class="chip" data-query="office pants under 2000">Office wear</div>
+          <div class="chip" data-query="running shoes for men">Running shoes</div>
+          <div class="chip" data-query="laptop under 50000">Budget laptops</div>
+        </div>
+      </div>
+
+      <!-- Messages List -->
+      <div class="messages-list hidden" id="messagesList"></div>
+    </div>
+
+    <!-- Products Section -->
+    <div class="products-section hidden" id="productsSection">
+      <div class="products-header">
+        <span>Recommended Products</span>
+        <span class="product-count" id="productCount">0</span>
+      </div>
+      <div class="products-grid" id="productsGrid"></div>
+    </div>
+
+    <!-- Follow-up Chips -->
+    <div class="followup-chips hidden" id="followupChips"></div>
+
+    <!-- Input Area -->
+    <div class="input-area">
+      <div class="budget-badge hidden" id="budgetBadge">
+        💰 Budget: ₹<span id="budgetDisplay">0</span>
+      </div>
+      
+      <div class="input-row">
+        <textarea 
+          id="chatInput" 
+          placeholder="Ask me anything — e.g. running shoes under ₹3000"
+          rows="1"
+        ></textarea>
+        <button class="send-btn" id="sendBtn" disabled>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+          </svg>
+        </button>
+      </div>
+      
+      <div class="input-hint">Press Enter to send, Shift+Enter for new line</div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
